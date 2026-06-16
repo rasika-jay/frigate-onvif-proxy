@@ -3,6 +3,7 @@ const argparse = require('argparse');
 const logger = require('simple-node-logger').createSimpleLogger();
 
 const OnvifServer = require('./src/onvif-server');
+const MqttBridge = require('./src/mqtt-bridge');
 const { readAndCheckConfig } = require('./src/config-tools');
 
 
@@ -38,6 +39,16 @@ if (args) {
             server.startDiscovery();
             if (process.env.DEBUG)
                 server.enableDebugOutput()
+
+            if (onvifConfig.frigate && onvifConfig.frigate.mqtt) {
+                const bridge = new MqttBridge(
+                    logger,
+                    onvifConfig.frigate.camera,
+                    onvifConfig.frigate.mqtt,
+                    server.getEventService()
+                );
+                bridge.start();
+            }
 
             if (!proxies[onvifConfig.target.hostname])
                 proxies[onvifConfig.target.hostname] = {}

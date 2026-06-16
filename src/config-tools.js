@@ -59,6 +59,19 @@ function readAndCheckConfig(logger, configFile) {
             isSaveRequired = true;
         }
 
+        // Parse optional full RTSP URL (e.g. go2rtc) into target.hostname / target.ports.rtsp
+        if (onvifConfig.target && onvifConfig.target.rtsp_url) {
+            try {
+                const parsed = new URL(onvifConfig.target.rtsp_url);
+                onvifConfig.target.hostname      = onvifConfig.target.hostname || parsed.hostname;
+                if (!onvifConfig.target.ports) onvifConfig.target.ports = {};
+                onvifConfig.target.ports.rtsp    = onvifConfig.target.ports.rtsp || (parseInt(parsed.port) || 554);
+                onvifConfig.target._rtsp_path    = parsed.pathname;
+            } catch (e) {
+                logger.warn(`CONFIG: Invalid target.rtsp_url '${onvifConfig.target.rtsp_url}': ${e.message}`);
+            }
+        }
+
         if (!getIp4FromMac(logger, onvifConfig.mac)) {
             const vlanName = `rtsp2onvif_${proxyCounter}`;
 

@@ -9,6 +9,7 @@ onvif:
     highQuality:
       rtsp: /Streaming/Channels/101/                    # The RTSP Path
       snapshot: /ISAPI/Streaming/Channels/101/picture   # Snapshot path - not working yet
+      encoding: H264                                    # Optional: H264 (default) or H265
       width: 2048                                       # The Video Width
       height: 1536                                      # The Video Height
       framerate: 15                                     # The Video Framerate/FPS
@@ -20,6 +21,19 @@ onvif:
       snapshot: 8080
     # mac - automatically added here and IP comes from DHCP- Add your own if you know what you doing
     # uuid - ONVIF ID - automatically added here. If you change it Protect will think its a different camera
+
+    # Optional: Frigate MQTT → ONVIF WS-Eventing motion event bridge
+    # frigate:
+    #   camera: front_door              # Frigate camera name (matches frigate/<name>/motion topic)
+    #   mqtt:
+    #     host: 192.168.1.100          # MQTT broker IP (e.g. Home Assistant or standalone Mosquitto)
+    #     port: 1883                   # Optional, defaults to 1883
+    #     topic_prefix: frigate        # Optional, defaults to 'frigate'
+
+    # Alternative RTSP source: full URL instead of target.hostname + target.ports.rtsp + highQuality.rtsp
+    # Useful when source is go2rtc (rtsp://go2rtc-host:8554/<camera>) — backward compatible
+    # target:
+    #   rtsp_url: rtsp://192.168.1.101:8554/front_door
   # - name: Dome 
   #   dev: enp2s0 
   #   highQuality:

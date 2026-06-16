@@ -8,6 +8,7 @@ const fs = require('fs');
 const logger = require('simple-node-logger');
 
 const { getIp4FromMac } = require('./net-tools')
+const EventService = require('./event-service')
 
 Date.prototype.stdTimezoneOffset = function () {
     let jan = new Date(this.getFullYear(), 0, 1);
@@ -27,6 +28,8 @@ module.exports = class OnvifServer {
         this.config.hostname = getIp4FromMac(logger, this.config.mac);
         if (!this.config.hostname)
             return -1;
+
+        this.eventService = new EventService(logger, this.config.hostname, this.config.ports.server);
 
         this.videoSource = {
             attributes: {
@@ -57,7 +60,7 @@ module.exports = class OnvifServer {
                     },
                     Name: 'CardinalHqCameraConfiguration',
                     UseCount: 1,
-                    Encoding: 'H264',
+                    Encoding: (this.config.highQuality.encoding || 'H264').toUpperCase(),
                     Resolution: {
                         Width: this.config.highQuality.width,
                         Height: this.config.highQuality.height
@@ -68,10 +71,9 @@ module.exports = class OnvifServer {
                         EncodingInterval: 1,
                         BitrateLimit: this.config.highQuality.bitrate
                     },
-                    H264: {
-                        GovLength: this.config.highQuality.framerate,
-                        H264Profile: 'Main'
-                    },
+                    ...((this.config.highQuality.encoding || '').toUpperCase() === 'H265'
+                        ? { H265: { GovLength: this.config.highQuality.framerate, H265Profile: 'Main' } }
+                        : { H264: { GovLength: this.config.highQuality.framerate, H264Profile: 'Main' } }),
                     SessionTimeout: 'PT1000S'
                 }
             }
@@ -99,7 +101,7 @@ module.exports = class OnvifServer {
                         },
                         Name: 'CardinalLqCameraConfiguration',
                         UseCount: 1,
-                        Encoding: 'H264',
+                        Encoding: (this.config.lowQuality.encoding || this.config.highQuality.encoding || 'H264').toUpperCase(),
                         Resolution: {
                             Width: this.config.lowQuality.width,
                             Height: this.config.lowQuality.height
@@ -110,10 +112,9 @@ module.exports = class OnvifServer {
                             EncodingInterval: 1,
                             BitrateLimit: this.config.lowQuality.bitrate
                         },
-                        H264: {
-                            GovLength: this.config.lowQuality.framerate,
-                            H264Profile: 'Main'
-                        },
+                        ...((this.config.lowQuality.encoding || this.config.highQuality.encoding || '').toUpperCase() === 'H265'
+                            ? { H265: { GovLength: this.config.lowQuality.framerate, H265Profile: 'Main' } }
+                            : { H264: { GovLength: this.config.lowQuality.framerate, H264Profile: 'Main' } }),
                         SessionTimeout: 'PT1000S'
                     }
                 }
@@ -218,6 +219,14 @@ module.exports = class OnvifServer {
                                 Extension: {}
                             };
                         }
+                        if (args.Category === undefined || args.Category == 'All' || args.Category == 'Events') {
+                            response.Capabilities['Events'] = {
+                                XAddr: `http://${this.config.hostname}:${this.config.ports.server}/onvif/event_service`,
+                                WSSubscriptionPolicySupport: true,
+                                WSPullPointSupport: false,
+                                WSPausableSubscriptionManagerInterfaceSupport: false
+                            };
+                        }
                         if (args.Category === undefined || args.Category == 'All' || args.Category == 'Media') {
                             response.Capabilities['Media'] = {
                                 XAddr: `http://${this.config.hostname}:${this.config.ports.server}/onvif/media_service`,
@@ -256,6 +265,14 @@ module.exports = class OnvifServer {
                                         Major: 2,
                                         Minor: 5,
                                     }
+                                },
+                                {
+                                    Namespace: 'http://www.onvif.org/ver10/events/wsdl',
+                                    XAddr: `http://${this.config.hostname}:${this.config.ports.server}/onvif/event_service`,
+                                    Version: {
+                                        Major: 2,
+                                        Minor: 4,
+                                    }
                                 }
                             ]
                         };
@@ -263,7 +280,7 @@ module.exports = class OnvifServer {
 
                     GetDeviceInformation: (args) => {
                         return {
-                            Manufacturer: 'rtsp-2-onvif',
+                            Manufacturer: `${this.config.name}`,
                             Model: `${this.config.name}`,
                             FirmwareVersion: '1.0.0',
                             SerialNumber: `${this.config.name.replace(' ', '_')}-0000`,
@@ -308,7 +325,7 @@ module.exports = class OnvifServer {
                     },
 
                     GetStreamUri: (args) => {
-                        let path = this.config.highQuality.rtsp;
+                        let path = this.config.target._rtsp_path || this.config.highQuality.rtsp;
                         if (args.ProfileToken == 'sub_stream' && this.config.lowQuality)
                             path = this.config.lowQuality.rtsp;
 
@@ -332,6 +349,8 @@ module.exports = class OnvifServer {
             let image = fs.readFileSync('./resources/snapshot.png');
             response.writeHead(200, { 'Content-Type': 'image/png' });
             response.end(image, 'binary');
+        } else if (action.startsWith('/onvif/event_service')) {
+            this.eventService.handleRequest(request, response);
         } else {
             response.writeHead(404, { 'Content-Type': 'text/plain' });
             response.write('404 Not Found\n');
@@ -342,7 +361,7 @@ module.exports = class OnvifServer {
     startHttpServer() {
         this.logger.info(`SERVER: ${this.config.name} - HTTP listening on ${this.config.hostname}:${this.config.ports.server}`);
 
-        this.server = http.createServer(this.listen);
+        this.server = http.createServer((req, res) => this.listen(req, res));
         this.server.listen(this.config.ports.server, this.config.hostname);
 
         this.deviceService = soap.listen(this.server, {
@@ -446,5 +465,9 @@ module.exports = class OnvifServer {
 
     getHostname() {
         return this.config.hostname;
+    }
+
+    getEventService() {
+        return this.eventService;
     }
 };

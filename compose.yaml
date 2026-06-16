@@ -1,7 +1,9 @@
 services:
-  rtsp-to-onvif:
-    image: kulasolutions/rtsp-to-onvif:latest
-    hostname: rtsp-to-onvif
+  frigate-onvif-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: frigate-onvif-proxy
     #restart: unless-stopped
     volumes:
       - ./config.yaml:/onvif.yaml
