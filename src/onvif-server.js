@@ -350,6 +350,7 @@ module.exports = class OnvifServer {
             response.writeHead(200, { 'Content-Type': 'image/png' });
             response.end(image, 'binary');
         } else if (action.startsWith('/onvif/event_service')) {
+            this.logger.debug(`SERVER: Event service request: ${request.method} ${action}`);
             this.eventService.handleRequest(request, response);
         } else {
             response.writeHead(404, { 'Content-Type': 'text/plain' });

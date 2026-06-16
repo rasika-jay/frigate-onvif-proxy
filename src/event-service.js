@@ -44,9 +44,22 @@ module.exports = class EventService {
         let body = '';
         req.on('data', chunk => { body += chunk; });
         req.on('end', () => {
-            const action = (req.headers['soapaction'] || '').replace(/"/g, '');
+            // SOAP 1.1 uses SOAPAction HTTP header; SOAP 1.2 puts the action in the
+            // Content-Type header as action="…". Fall back to the body element name.
+            let action = (req.headers['soapaction'] || '').replace(/"/g, '');
+            if (!action) {
+                const ctMatch = (req.headers['content-type'] || '').match(/action="([^"]+)"/i);
+                if (ctMatch) action = ctMatch[1];
+            }
+            if (!action) {
+                const bodyMatch = body.match(/<[^>]*[Bb]ody[^>]*>\s*<(?:[^:>\s]+:)?(\w+)/);
+                if (bodyMatch) action = bodyMatch[1];
+            }
+
             const subIdMatch = req.url.match(/\/onvif\/event_service\/([^?/]+)/);
             const subId = subIdMatch ? subIdMatch[1] : null;
+
+            this.logger.debug(`EVENT: request action="${action}" url=${req.url}`);
 
             if (action.includes('GetEventProperties')) {
                 this._handleGetEventProperties(res);
@@ -57,6 +70,7 @@ module.exports = class EventService {
             } else if (action.includes('Unsubscribe') && subId) {
                 this._handleUnsubscribe(subId, res);
             } else {
+                this.logger.warn(`EVENT: unknown action="${action}" url=${req.url}`);
                 res.writeHead(400, { 'Content-Type': 'text/plain' });
                 res.end('Unknown event service action');
             }
@@ -220,7 +234,7 @@ module.exports = class EventService {
                     'Content-Length': Buffer.byteLength(body)
                 }
             }, res => res.resume());
-            req.on('error', err => this.logger.debug(`EVENT: Notify push failed: ${err.message}`));
+            req.on('error', err => this.logger.warn(`EVENT: Notify push failed to ${consumerUrl}: ${err.message}`));
             req.write(body);
             req.end();
             this.logger.debug(`EVENT: Notify pushed to ${consumerUrl} isMotion=${isMotion}`);
