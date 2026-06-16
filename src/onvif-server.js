@@ -462,7 +462,12 @@ module.exports = class OnvifServer {
             });
         });
 
-        this.discoverySocket.bind(3702, () => {
+        // Bind to the camera's own macvlan IP, not 0.0.0.0. When multiple
+        // cameras all bind to 0.0.0.0:3702 with reuseAddr, Linux delivers each
+        // incoming UDP packet to only one socket (the last one bound). Binding
+        // to distinct IPs gives each camera its own socket address so the
+        // kernel delivers the WS-Discovery probe to all of them independently.
+        this.discoverySocket.bind(3702, this.config.hostname, () => {
             return this.discoverySocket.addMembership('239.255.255.250', this.config.hostname);
         });
     }
