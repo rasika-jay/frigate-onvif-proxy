@@ -346,9 +346,8 @@ module.exports = class OnvifServer {
     listen(request, response) {
         let action = url.parse(request.url, true).pathname;
         if (action == '/snapshot.png') {
-            let image = fs.readFileSync('./resources/snapshot.png');
             response.writeHead(200, { 'Content-Type': 'image/png' });
-            response.end(image, 'binary');
+            response.end(this.snapshotImage, 'binary');
         } else if (action.startsWith('/onvif/event_service')) {
             this.logger.debug(`SERVER: Event service request: ${request.method} ${action}`);
             this.eventService.handleRequest(request, response);
@@ -362,6 +361,7 @@ module.exports = class OnvifServer {
     startHttpServer() {
         this.logger.info(`SERVER: ${this.config.name} - HTTP listening on ${this.config.hostname}:${this.config.ports.server}`);
 
+        this.snapshotImage = fs.readFileSync('./resources/snapshot.png');
         this.server = http.createServer((req, res) => this.listen(req, res));
         this.server.listen(this.config.ports.server, this.config.hostname);
 

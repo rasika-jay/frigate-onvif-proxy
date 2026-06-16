@@ -52,6 +52,16 @@ module.exports = class EventService {
         this.hostname = hostname;
         this.port = port;
         this.subscriptions = new Map();
+        // Proactively remove expired subscriptions every 5 minutes
+        setInterval(() => {
+            const now = new Date();
+            for (const [subId, sub] of this.subscriptions) {
+                if (sub.terminationTime < now) {
+                    this.subscriptions.delete(subId);
+                    this.logger.debug(`EVENT: Expired subscription removed [${subId}]`);
+                }
+            }
+        }, 5 * 60 * 1000).unref();
     }
 
     getServiceUrl() {
@@ -59,9 +69,23 @@ module.exports = class EventService {
     }
 
     handleRequest(req, res) {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
+        const MAX_BODY = 1024 * 1024; // 1 MB — SOAP envelopes are tiny; cap prevents memory exhaustion
+        const chunks = [];
+        let bodySize = 0;
+        let tooLarge = false;
+        req.on('data', chunk => {
+            bodySize += chunk.length;
+            if (bodySize > MAX_BODY) {
+                tooLarge = true;
+                res.writeHead(413); res.end();
+                req.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
         req.on('end', () => {
+            if (tooLarge) return;
+            const body = Buffer.concat(chunks).toString();
             // SOAP 1.1 uses SOAPAction HTTP header; SOAP 1.2 puts the action in the
             // Content-Type header as action="…". Fall back to the body element name.
             let action = (req.headers['soapaction'] || '').replace(/"/g, '');

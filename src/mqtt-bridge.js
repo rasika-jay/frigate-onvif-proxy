@@ -57,7 +57,9 @@ module.exports = class MqttBridge {
                     this.logger.info(`MQTT: ${this.frigateCamera} event end`);
                     this.eventService.notify(false);
                 }
-            } catch (_) {}
+            } catch (e) {
+                this.logger.debug(`MQTT: Failed to parse event payload: ${e.message}`);
+            }
         }
     }
 };
