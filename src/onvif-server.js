@@ -223,7 +223,7 @@ module.exports = class OnvifServer {
                             response.Capabilities['Events'] = {
                                 XAddr: `http://${this.config.hostname}:${this.config.ports.server}/onvif/event_service`,
                                 WSSubscriptionPolicySupport: true,
-                                WSPullPointSupport: false,
+                                WSPullPointSupport: true,
                                 WSPausableSubscriptionManagerInterfaceSupport: false
                             };
                         }

@@ -3,7 +3,7 @@ const https = require('https');
 const xml2js = require('xml2js');
 const uuid = require('node-uuid');
 
-const SOAP_NS = `xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2"`;
+const SOAP_NS = `xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2" xmlns:tev="http://www.onvif.org/ver10/events/wsdl" xmlns:tns1="http://www.onvif.org/ver10/topics" xmlns:tt="http://www.onvif.org/ver10/schema"`;
 
 function soapEnvelope(body) {
     return `<?xml version="1.0" encoding="UTF-8"?>\n<SOAP-ENV:Envelope ${SOAP_NS}>\n  <SOAP-ENV:Body>\n${body}\n  </SOAP-ENV:Body>\n</SOAP-ENV:Envelope>`;
@@ -26,6 +26,24 @@ function parseTermination(str) {
     const secs = parseFloat(m[4] || 0);
     const ms = ((days * 86400) + (hrs * 3600) + (mins * 60) + secs) * 1000;
     return new Date(Date.now() + (ms || 3600 * 1000));
+}
+
+function notificationMessageXml(utcTime, isMotion) {
+    return `      <wsnt:NotificationMessage>
+        <wsnt:Topic Dialect="http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet">tns1:RuleEngine/MotionRegionDetector/Motion</wsnt:Topic>
+        <wsnt:Message>
+          <tt:Message UtcTime="${utcTime}" PropertyOperation="Changed">
+            <tt:Source>
+              <tt:SimpleItem Name="VideoSourceConfigurationToken" Value="video_src_token"/>
+              <tt:SimpleItem Name="VideoAnalyticsConfigurationToken" Value="analytics_token"/>
+              <tt:SimpleItem Name="Rule" Value="MyMotionDetectorRule"/>
+            </tt:Source>
+            <tt:Data>
+              <tt:SimpleItem Name="IsMotion" Value="${isMotion ? 'true' : 'false'}"/>
+            </tt:Data>
+          </tt:Message>
+        </wsnt:Message>
+      </wsnt:NotificationMessage>`;
 }
 
 module.exports = class EventService {
@@ -63,8 +81,12 @@ module.exports = class EventService {
 
             if (action.includes('GetEventProperties')) {
                 this._handleGetEventProperties(res);
+            } else if (action.includes('CreatePullPointSubscription') && !subId) {
+                this._handleCreatePullPointSubscription(body, res);
             } else if (action.includes('Subscribe') && !subId) {
                 this._handleSubscribe(body, res);
+            } else if (action.includes('PullMessages') && subId) {
+                this._handlePullMessages(subId, body, res);
             } else if (action.includes('Renew') && subId) {
                 this._handleRenew(subId, body, res);
             } else if (action.includes('Unsubscribe') && subId) {
@@ -75,6 +97,67 @@ module.exports = class EventService {
                 res.end('Unknown event service action');
             }
         });
+    }
+
+    _handleCreatePullPointSubscription(body, res) {
+        xml2js.parseString(body, { tagNameProcessors: [xml2js.processors.stripPrefix] }, (err, parsed) => {
+            if (err) {
+                this.logger.debug(`EVENT: CreatePullPoint parse error: ${err.message}`);
+                res.writeHead(400); res.end(); return;
+            }
+
+            let terminationStr = 'PT1H';
+            try {
+                terminationStr = parsed.Envelope.Body[0].CreatePullPointSubscription[0].InitialTerminationTime[0] || 'PT1H';
+            } catch (_) {}
+
+            const subId          = uuid.v4();
+            const terminationTime = parseTermination(terminationStr);
+            this.subscriptions.set(subId, { type: 'pull', queue: [], terminationTime });
+            this.logger.info(`EVENT: CreatePullPoint [${subId}] until ${terminationTime.toISOString()}`);
+
+            const now       = new Date();
+            const subRefUrl = `http://${this.hostname}:${this.port}/onvif/event_service/${subId}`;
+            res.writeHead(200, { 'Content-Type': 'application/soap+xml; charset=utf-8' });
+            res.end(soapEnvelope(`    <tev:CreatePullPointSubscriptionResponse>
+      <tev:SubscriptionReference>
+        <wsa:Address>${subRefUrl}</wsa:Address>
+      </tev:SubscriptionReference>
+      <wsnt:CurrentTime>${now.toISOString()}</wsnt:CurrentTime>
+      <wsnt:TerminationTime>${terminationTime.toISOString()}</wsnt:TerminationTime>
+    </tev:CreatePullPointSubscriptionResponse>`));
+        });
+    }
+
+    _handlePullMessages(subId, body, res) {
+        const sub = this.subscriptions.get(subId);
+        if (!sub) {
+            res.writeHead(404); res.end(); return;
+        }
+
+        const now = new Date();
+        if (sub.terminationTime < now) {
+            this.subscriptions.delete(subId);
+            res.writeHead(404); res.end(); return;
+        }
+
+        let limit = 10;
+        try {
+            xml2js.parseString(body, { tagNameProcessors: [xml2js.processors.stripPrefix] }, (err, parsed) => {
+                if (!err) limit = parseInt(parsed.Envelope.Body[0].PullMessages[0].MessageLimit[0]) || 10;
+            });
+        } catch (_) {}
+
+        const events = sub.queue.splice(0, limit);
+        this.logger.debug(`EVENT: PullMessages [${subId}] returning ${events.length} event(s)`);
+
+        const messages = events.map(e => notificationMessageXml(e.utcTime, e.isMotion)).join('\n');
+        res.writeHead(200, { 'Content-Type': 'application/soap+xml; charset=utf-8' });
+        res.end(soapEnvelope(`    <tev:PullMessagesResponse>
+      <tev:CurrentTime>${now.toISOString()}</tev:CurrentTime>
+      <tev:TerminationTime>${sub.terminationTime.toISOString()}</tev:TerminationTime>
+${messages}
+    </tev:PullMessagesResponse>`));
     }
 
     _handleSubscribe(body, res) {
@@ -93,7 +176,7 @@ module.exports = class EventService {
 
             const subId          = uuid.v4();
             const terminationTime = parseTermination(terminationStr);
-            this.subscriptions.set(subId, { consumerUrl, terminationTime });
+            this.subscriptions.set(subId, { type: 'push', consumerUrl, terminationTime });
             this.logger.info(`EVENT: Subscribe from ${consumerUrl} until ${terminationTime.toISOString()} [${subId}]`);
 
             const now        = new Date();
@@ -184,7 +267,12 @@ module.exports = class EventService {
                 this.subscriptions.delete(subId);
                 continue;
             }
-            this._pushNotify(sub.consumerUrl, now.toISOString(), isMotion);
+            if (sub.type === 'pull') {
+                sub.queue.push({ utcTime: now.toISOString(), isMotion });
+                this.logger.debug(`EVENT: Queued isMotion=${isMotion} for pull subscription [${subId}] (queue length: ${sub.queue.length})`);
+            } else {
+                this._pushNotify(sub.consumerUrl, now.toISOString(), isMotion);
+            }
         }
     }
 
@@ -202,21 +290,7 @@ module.exports = class EventService {
   </SOAP-ENV:Header>
   <SOAP-ENV:Body>
     <wsnt:Notify>
-      <wsnt:NotificationMessage>
-        <wsnt:Topic Dialect="http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet">tns1:RuleEngine/MotionRegionDetector/Motion</wsnt:Topic>
-        <wsnt:Message>
-          <tt:Message UtcTime="${utcTime}" PropertyOperation="Changed">
-            <tt:Source>
-              <tt:SimpleItem Name="VideoSourceConfigurationToken" Value="video_src_token"/>
-              <tt:SimpleItem Name="VideoAnalyticsConfigurationToken" Value="analytics_token"/>
-              <tt:SimpleItem Name="Rule" Value="MyMotionDetectorRule"/>
-            </tt:Source>
-            <tt:Data>
-              <tt:SimpleItem Name="IsMotion" Value="${isMotion ? 'true' : 'false'}"/>
-            </tt:Data>
-          </tt:Message>
-        </wsnt:Message>
-      </wsnt:NotificationMessage>
+${notificationMessageXml(utcTime, isMotion)}
     </wsnt:Notify>
   </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>`;
