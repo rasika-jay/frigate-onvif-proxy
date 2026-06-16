@@ -100,8 +100,23 @@ ${probeMatchXml}
 </SOAP-ENV:Envelope>`;
     }
 
-    // Shared WS-Discovery socket handles multicast probes (scan discovery).
-    // Per-camera sockets below handle directed unicast probes during adoption.
+    // Per-camera send sockets ensure each ProbeMatches response is sent FROM
+    // the camera's own macvlan IP. The kernel routes via that macvlan interface,
+    // giving the packet the macvlan's unique Ethernet source MAC. Protect reads
+    // this MAC to identify devices; all cameras must have distinct MACs.
+    const cameraSendSockets = new Map();
+    for (const server of servers) {
+        const sock = dgram.createSocket({ type: 'udp4' });
+        sock.on('error', err =>
+            logger.debug(`DISCOVERY: Send socket error for ${server.getHostname()}: ${err.message}`)
+        );
+        sock.bind(0, server.getHostname(), () =>
+            logger.debug(`DISCOVERY: Send socket bound to ${server.getHostname()}`)
+        );
+        cameraSendSockets.set(server, sock);
+    }
+
+    // Shared WS-Discovery socket receives all multicast probes.
     let discoveryMsgNo = 0;
     const discoverySocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
@@ -122,13 +137,11 @@ ${probeMatchXml}
 
             logger.debug(`DISCOVERY: Probe from ${remote.address}:${remote.port}`);
 
-            // Multicast probes: respond for every camera (one packet each).
-            // Directed unicast probes during adoption are handled by per-camera
-            // sockets below, which reply with only the probed camera's UUID.
             for (const server of servers) {
                 const response = buildDiscoveryResponse(server.getProbeMatchXml(), probeUuid, discoveryMsgNo++);
                 const buf = Buffer.from(response);
-                discoverySocket.send(buf, 0, buf.length, remote.port, remote.address, sendErr => {
+                const sendSock = cameraSendSockets.get(server) || discoverySocket;
+                sendSock.send(buf, 0, buf.length, remote.port, remote.address, sendErr => {
                     if (sendErr) logger.warn(`DISCOVERY: Send failed for ${server.getHostname()}: ${sendErr.message}`);
                     else logger.debug(`DISCOVERY: Sent ProbeMatches for ${server.getHostname()} to ${remote.address}:${remote.port}`);
                 });
@@ -150,45 +163,6 @@ ${probeMatchXml}
         }
         logger.info(`DISCOVERY: Listening on :3702 for ${servers.length} cameras`);
     });
-
-    // Per-camera sockets bound to each camera's IP. Linux prefers a socket bound
-    // to a specific IP over 0.0.0.0 for unicast delivery, so directed probes that
-    // Protect sends during adoption go here — not to the shared socket — and get
-    // back only that camera's UUID. Do NOT call addMembership; multicast stays on
-    // the shared socket.
-    for (const server of servers) {
-        const camSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-
-        camSocket.on('error', err =>
-            logger.debug(`DISCOVERY: Unicast socket error ${server.getHostname()}: ${err.message}`)
-        );
-
-        camSocket.on('message', (message, remote) => {
-            xml2js.parseString(message.toString(), { tagNameProcessors: [xml2js.processors.stripPrefix] }, (err, result) => {
-                if (err) return;
-                let probeUuid = '', probeType = '';
-                try {
-                    probeUuid = result['Envelope']['Header'][0]['MessageID'][0];
-                    probeType = result['Envelope']['Body'][0]['Probe'][0]['Types'][0];
-                    if (typeof probeType === 'object') probeType = probeType._;
-                } catch (_) {}
-                if (probeType !== '' && !probeType.includes('NetworkVideoTransmitter')) return;
-
-                logger.debug(`DISCOVERY: Unicast probe to ${server.getHostname()} from ${remote.address}:${remote.port}`);
-
-                const response = buildDiscoveryResponse(server.getProbeMatchXml(), probeUuid, discoveryMsgNo++);
-                const buf = Buffer.from(response);
-                discoverySocket.send(buf, 0, buf.length, remote.port, remote.address, sendErr => {
-                    if (sendErr) logger.warn(`DISCOVERY: Unicast send failed for ${server.getHostname()}: ${sendErr.message}`);
-                    else logger.debug(`DISCOVERY: Unicast ProbeMatches for ${server.getHostname()} → ${remote.address}:${remote.port}`);
-                });
-            });
-        });
-
-        camSocket.bind(3702, server.getHostname(), () =>
-            logger.debug(`DISCOVERY: Unicast socket bound to ${server.getHostname()}:3702`)
-        );
-    }
 
     return 0;
 }
