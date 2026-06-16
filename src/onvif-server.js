@@ -291,10 +291,10 @@ module.exports = class OnvifServer {
                     GetNetworkInterfaces: (args) => {
                         return {
                             NetworkInterfaces: {
-                                attributes: { token: 'eth0' },
+                                attributes: { token: this.config.dev },
                                 Enabled: true,
                                 Info: {
-                                    Name: 'eth0',
+                                    Name: this.config.dev,
                                     HwAddress: this.config.mac,
                                     MTU: 1500
                                 },
