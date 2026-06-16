@@ -57,7 +57,8 @@ if (args) {
                     logger,
                     onvifConfig.frigate.camera,
                     onvifConfig.frigate.mqtt,
-                    server.getEventService()
+                    server.getEventService(),
+                    onvifConfig.frigate.objects
                 );
                 bridge.start();
             }

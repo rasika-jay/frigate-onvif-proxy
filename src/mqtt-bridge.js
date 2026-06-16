@@ -1,12 +1,15 @@
 const mqtt = require('mqtt');
 
 module.exports = class MqttBridge {
-    constructor(logger, frigateCamera, mqttConfig, eventService) {
+    constructor(logger, frigateCamera, mqttConfig, eventService, objects) {
         this.logger        = logger;
         this.frigateCamera = frigateCamera;
         this.mqttConfig    = mqttConfig;
         this.eventService  = eventService;
         this.client        = null;
+        this.objects       = Array.isArray(objects) && objects.length > 0
+            ? objects.map(o => String(o).toLowerCase())
+            : null;  // null = no filter, fire on all motion/events
     }
 
     start() {
@@ -17,8 +20,9 @@ module.exports = class MqttBridge {
         this.client = mqtt.connect(`mqtt://${host}:${port}`);
 
         this.client.on('connect', () => {
-            this.logger.info(`MQTT: Connected to ${host}:${port} for camera '${this.frigateCamera}'`);
-            this.client.subscribe(`${prefix}/${this.frigateCamera}/motion`);
+            this.logger.info(`MQTT: Connected to ${host}:${port} for camera '${this.frigateCamera}'${this.objects ? ` (filter: ${this.objects.join(', ')})` : ''}`);
+            if (!this.objects)
+                this.client.subscribe(`${prefix}/${this.frigateCamera}/motion`);
             this.client.subscribe(`${prefix}/events`);
         });
 
@@ -50,11 +54,16 @@ module.exports = class MqttBridge {
                 const event = JSON.parse(payload);
                 const camera = event.after && event.after.camera;
                 if (camera !== this.frigateCamera) return;
+
                 if (event.type === 'new') {
-                    this.logger.info(`MQTT: ${this.frigateCamera} event start (${event.after.label})`);
+                    const label = (event.after.label || '').toLowerCase();
+                    if (this.objects && !this.objects.includes(label)) return;
+                    this.logger.info(`MQTT: ${this.frigateCamera} event start (${label})`);
                     this.eventService.notify(true);
                 } else if (event.type === 'end') {
-                    this.logger.info(`MQTT: ${this.frigateCamera} event end`);
+                    const label = ((event.before || event.after).label || '').toLowerCase();
+                    if (this.objects && !this.objects.includes(label)) return;
+                    this.logger.info(`MQTT: ${this.frigateCamera} event end (${label})`);
                     this.eventService.notify(false);
                 }
             } catch (e) {

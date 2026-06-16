@@ -34,6 +34,21 @@ function sleep(seconds){
     var sleep = spawnSync('sleep', [seconds]);
 }
 
+function deepMerge(base, override) {
+    const result = Object.assign({}, base);
+    for (const key of Object.keys(override || {})) {
+        if (
+            override[key] !== null && typeof override[key] === 'object' && !Array.isArray(override[key]) &&
+            result[key]   !== null && typeof result[key]   === 'object' && !Array.isArray(result[key])
+        ) {
+            result[key] = deepMerge(result[key], override[key]);
+        } else {
+            result[key] = override[key];
+        }
+    }
+    return result;
+}
+
 function validateConfig(logger, config) {
     let valid = true;
 
@@ -53,6 +68,8 @@ function validateConfig(logger, config) {
             { logger.error(`CONFIG: camera ${id}: missing required field "ports.server"`); valid = false; }
         if ((!cam.target || !cam.target.hostname) && (!cam.target || !cam.target.rtsp_url))
             { logger.error(`CONFIG: camera ${id}: must have "target.hostname" or "target.rtsp_url"`); valid = false; }
+        if (cam.frigate && cam.frigate.mqtt && !cam.frigate.camera)
+            { logger.error(`CONFIG: camera ${id}: "frigate.mqtt" is set but "frigate.camera" is missing`); valid = false; }
 
         const hq = cam.highQuality;
         if (!hq) {
@@ -74,6 +91,13 @@ function validateConfig(logger, config) {
 function readAndCheckConfig(logger, configFile) {
 
     let config = readConfig(logger, configFile);
+
+    // Collect global defaults (everything at root except 'onvif') and
+    // deep-merge into each camera entry so per-camera values always win.
+    const globalDefaults = Object.fromEntries(
+        Object.entries(config).filter(([k]) => k !== 'onvif')
+    );
+    config.onvif = config.onvif.map(cam => deepMerge(globalDefaults, cam));
 
     if (!validateConfig(logger, config)) process.exit(1);
 
