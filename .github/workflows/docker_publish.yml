@@ -21,12 +21,12 @@ jobs:
         with:
           version: "lab:latest"
           driver: cloud
-          endpoint: "kulasolutions/rtsp-to-onvif"
+          endpoint: "rasika-jay/frigate-onvif-proxy"
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
-          tags: "kulasolutions/rtsp-to-onvif:0.1.${{Github.run_number}},kulasolutions/rtsp-to-onvif:latest"
+          tags: "rasika-jay/frigate-onvif-proxy:0.1.${{Github.run_number}},rasika-jay/frigate-onvif-proxy:latest"
           # For pull requests, export results to the build cache.
           # Otherwise, push to a registry.
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}

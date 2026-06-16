@@ -73,7 +73,7 @@ function readAndCheckConfig(logger, configFile) {
         }
 
         if (!getIp4FromMac(logger, onvifConfig.mac)) {
-            const vlanName = `rtsp2onvif_${proxyCounter}`;
+            const vlanName = `frigate_onvif_${proxyCounter}`;
 
             // Remove stale interface from a previous run before recreating
             try {
@@ -131,7 +131,7 @@ function writeConfig(logger, configFile, config) {
 
 function cleanupInterfaces(logger, config) {
     config.onvif.forEach((_, i) => {
-        const vlanName = `rtsp2onvif_${i}`;
+        const vlanName = `frigate_onvif_${i}`;
         try {
             execSync(`ip link del ${vlanName}`);
             logger.info(`NET_CONF: DEL (shutdown) - ${vlanName}`);

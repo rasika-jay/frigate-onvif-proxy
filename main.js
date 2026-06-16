@@ -11,7 +11,7 @@ const { readAndCheckConfig, cleanupInterfaces } = require('./src/config-tools');
 
 
 const parser = new argparse.ArgumentParser({
-    description: 'Virtual RTSP to ONVIF proxy'
+    description: 'Frigate ONVIF proxy'
 });
 
 parser.add_argument('config', { help: 'config filename to use', nargs: '?' });

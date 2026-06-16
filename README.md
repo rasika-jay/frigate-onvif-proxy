@@ -185,7 +185,7 @@ Misc notes
 ---
 
 Remove a virutal IP on the host without rebooting
-`sudo ip link del dev rtsp2onvif_<number>`
+`sudo ip link del dev frigate_onvif_<number>`
 
 ---
 
