@@ -129,6 +129,17 @@ function writeConfig(logger, configFile, config) {
     logger.info(`CONFIG: Updated ${configFile}`);
 }
 
+function cleanupInterfaces(logger, config) {
+    config.onvif.forEach((_, i) => {
+        const vlanName = `rtsp2onvif_${i}`;
+        try {
+            execSync(`ip link del ${vlanName}`);
+            logger.info(`NET_CONF: DEL (shutdown) - ${vlanName}`);
+        } catch (_) {}
+    });
+}
+
 module.exports = {
-    readAndCheckConfig
+    readAndCheckConfig,
+    cleanupInterfaces
 }

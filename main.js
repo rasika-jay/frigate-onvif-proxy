@@ -7,7 +7,7 @@ const logger   = require('simple-node-logger').createSimpleLogger();
 
 const OnvifServer = require('./src/onvif-server');
 const MqttBridge  = require('./src/mqtt-bridge');
-const { readAndCheckConfig } = require('./src/config-tools');
+const { readAndCheckConfig, cleanupInterfaces } = require('./src/config-tools');
 
 
 const parser = new argparse.ArgumentParser({
@@ -29,6 +29,13 @@ if (args) {
     }
 
     let config = readAndCheckConfig(logger, args.config)
+
+    function shutdown() {
+        cleanupInterfaces(logger, config);
+        process.exit(0);
+    }
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT',  shutdown);
 
     const servers = [];
     let proxies = {};
