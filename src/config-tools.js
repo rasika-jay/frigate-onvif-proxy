@@ -75,6 +75,12 @@ function readAndCheckConfig(logger, configFile) {
         if (!getIp4FromMac(logger, onvifConfig.mac)) {
             const vlanName = `rtsp2onvif_${proxyCounter}`;
 
+            // Remove stale interface from a previous run before recreating
+            try {
+                execSync(`ip link del ${vlanName}`);
+                logger.info(`NET_CONF: DEL (cleanup) - ${vlanName}`);
+            } catch (_) {}
+
             logger.info(`NET_CONF: ADD - ${vlanName} MAC: ${onvifConfig.mac}`);
             try {
                 const stdout = execSync(`ip link add ${vlanName} link ${onvifConfig.dev} address ${onvifConfig.mac} type macvlan mode bridge`);
