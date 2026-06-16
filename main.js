@@ -99,8 +99,14 @@ if (args) {
 
             logger.debug(`DISCOVERY: Probe from ${remote.address}:${remote.port}`);
 
-            const probeMatches = servers.map(s => s.getProbeMatchXml()).join('\n');
-            const response = `<?xml version="1.0" encoding="UTF-8"?>
+            // Send one ProbeMatches per camera (separate UDP packets).
+            // A combined envelope breaks directed probes: when UniFi Protect
+            // unicasts a probe to a specific camera's IP to get its UUID, we
+            // must reply with ONLY that camera's ProbeMatch. Bundling all cameras
+            // causes Protect to read the first UUID for every camera it probes,
+            // making all cameras appear as the same device.
+            for (const server of servers) {
+                const response = `<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
     <SOAP-ENV:Header>
         <wsa:MessageID>uuid:${uuid.v1()}</wsa:MessageID>
@@ -111,16 +117,16 @@ if (args) {
     </SOAP-ENV:Header>
     <SOAP-ENV:Body>
         <d:ProbeMatches>
-${probeMatches}
+${server.getProbeMatchXml()}
         </d:ProbeMatches>
     </SOAP-ENV:Body>
 </SOAP-ENV:Envelope>`;
-
-            const buf = Buffer.from(response);
-            discoverySocket.send(buf, 0, buf.length, remote.port, remote.address, sendErr => {
-                if (sendErr) logger.warn(`DISCOVERY: Send failed: ${sendErr.message}`);
-                else logger.debug(`DISCOVERY: Sent ProbeMatches for ${servers.length} cameras to ${remote.address}:${remote.port}`);
-            });
+                const buf = Buffer.from(response);
+                discoverySocket.send(buf, 0, buf.length, remote.port, remote.address, sendErr => {
+                    if (sendErr) logger.warn(`DISCOVERY: Send failed for ${server.getHostname()}: ${sendErr.message}`);
+                    else logger.debug(`DISCOVERY: Sent ProbeMatches for ${server.getHostname()} to ${remote.address}:${remote.port}`);
+                });
+            }
         });
     });
 
