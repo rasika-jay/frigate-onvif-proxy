@@ -1,5 +1,6 @@
 onvif:
   - name: BulletCam                               # A user define named that will show up in the consumer device. Use letters only, no spaces or special characters
+    manufacturer: Frigate                          # Optional: manufacturer string reported via ONVIF GetDeviceInformation (default: Frigate)
     dev: enp2s0 #eth0                             # Network interface to add virtual IP's too. use ip addr to find your name
     target:
       hostname: 192.168.1.187                      # Your cameras IPv4 address

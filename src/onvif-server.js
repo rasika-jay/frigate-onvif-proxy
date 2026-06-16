@@ -280,7 +280,7 @@ module.exports = class OnvifServer {
 
                     GetDeviceInformation: (args) => {
                         return {
-                            Manufacturer: `${this.config.name}`,
+                            Manufacturer: this.config.manufacturer || 'Frigate',
                             Model: `${this.config.name}`,
                             FirmwareVersion: '1.0.0',
                             SerialNumber: `${this.config.name.replace(' ', '_')}-0000`,
