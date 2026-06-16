@@ -286,6 +286,26 @@ module.exports = class OnvifServer {
                             SerialNumber: `${this.config.name.replace(' ', '_')}-0000`,
                             HardwareId: `${this.config.name.replace(' ', '_')}-1001`
                         };
+                    },
+
+                    GetNetworkInterfaces: (args) => {
+                        return {
+                            NetworkInterfaces: {
+                                attributes: { token: 'eth0' },
+                                Enabled: true,
+                                Info: {
+                                    Name: 'eth0',
+                                    HwAddress: this.config.mac,
+                                    MTU: 1500
+                                },
+                                IPv4: {
+                                    Enabled: true,
+                                    Config: {
+                                        DHCP: true
+                                    }
+                                }
+                            }
+                        };
                     }
 
                 }
@@ -455,8 +475,16 @@ module.exports = class OnvifServer {
                     this.discoveryMessageNo++;
                     let responseBuffer = Buffer.from(response);
                     const sock = dgram.createSocket('udp4');
+                    sock.on('error', (err) => {
+                        this.logger.warn(`SERVER: ${this.config.name} - Discovery response error: ${err.message}`);
+                        try { sock.close(); } catch (_) {}
+                    });
                     sock.bind(0, this.config.hostname, () => {
-                        sock.send(responseBuffer, 0, responseBuffer.length, remote.port, remote.address, () => sock.close());
+                        sock.send(responseBuffer, 0, responseBuffer.length, remote.port, remote.address, (err) => {
+                            if (err) this.logger.warn(`SERVER: ${this.config.name} - Discovery send failed: ${err.message}`);
+                            else this.logger.debug(`SERVER: ${this.config.name} - Discovery response sent to ${remote.address}:${remote.port} from ${this.config.hostname}`);
+                            sock.close();
+                        });
                     });
                 }
             });
