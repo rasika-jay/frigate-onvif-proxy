@@ -1,9 +1,12 @@
 const tcpProxy = require('node-tcp-proxy');
 const argparse = require('argparse');
-const logger = require('simple-node-logger').createSimpleLogger();
+const dgram    = require('dgram');
+const xml2js   = require('xml2js');
+const uuid     = require('node-uuid');
+const logger   = require('simple-node-logger').createSimpleLogger();
 
 const OnvifServer = require('./src/onvif-server');
-const MqttBridge = require('./src/mqtt-bridge');
+const MqttBridge  = require('./src/mqtt-bridge');
 const { readAndCheckConfig } = require('./src/config-tools');
 
 
@@ -27,6 +30,7 @@ if (args) {
 
     let config = readAndCheckConfig(logger, args.config)
 
+    const servers = [];
     let proxies = {};
     for (let onvifConfig of config.onvif) {
 
@@ -36,9 +40,10 @@ if (args) {
 
             logger.info('');
             server.startHttpServer();
-            server.startDiscovery();
             if (process.env.DEBUG)
                 server.enableDebugOutput()
+
+            servers.push(server);
 
             if (onvifConfig.frigate && onvifConfig.frigate.mqtt) {
                 const bridge = new MqttBridge(
@@ -69,6 +74,70 @@ if (args) {
             tcpProxy.createProxy(sourcePort, destinationAddress, proxies[destinationAddress][sourcePort]);
         }
     }
+
+    // Single shared WS-Discovery socket. Sends one ProbeMatches containing all
+    // cameras so UniFi Protect sees them all from one UDP packet, bypassing the
+    // per-macvlan routing issue where individual camera response sockets would
+    // use whichever interface the kernel's routing table picks for 192.168.1.0/24.
+    let discoveryMsgNo = 0;
+    const discoverySocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+    discoverySocket.on('error', err => logger.warn(`DISCOVERY: Socket error: ${err.message}`));
+
+    discoverySocket.on('message', (message, remote) => {
+        xml2js.parseString(message.toString(), { tagNameProcessors: [xml2js.processors.stripPrefix] }, (err, result) => {
+            if (err) return;
+
+            let probeUuid = '', probeType = '';
+            try {
+                probeUuid = result['Envelope']['Header'][0]['MessageID'][0];
+                probeType = result['Envelope']['Body'][0]['Probe'][0]['Types'][0];
+                if (typeof probeType === 'object') probeType = probeType._;
+            } catch (_) {}
+
+            if (probeType !== '' && !probeType.includes('NetworkVideoTransmitter')) return;
+
+            logger.debug(`DISCOVERY: Probe from ${remote.address}:${remote.port}`);
+
+            const probeMatches = servers.map(s => s.getProbeMatchXml()).join('\n');
+            const response = `<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
+    <SOAP-ENV:Header>
+        <wsa:MessageID>uuid:${uuid.v1()}</wsa:MessageID>
+        <wsa:RelatesTo>${probeUuid}</wsa:RelatesTo>
+        <wsa:To SOAP-ENV:mustUnderstand="true">http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</wsa:To>
+        <wsa:Action SOAP-ENV:mustUnderstand="true">http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</wsa:Action>
+        <d:AppSequence SOAP-ENV:mustUnderstand="true" MessageNumber="${discoveryMsgNo++}" InstanceId="1234567890"/>
+    </SOAP-ENV:Header>
+    <SOAP-ENV:Body>
+        <d:ProbeMatches>
+${probeMatches}
+        </d:ProbeMatches>
+    </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>`;
+
+            const buf = Buffer.from(response);
+            discoverySocket.send(buf, 0, buf.length, remote.port, remote.address, sendErr => {
+                if (sendErr) logger.warn(`DISCOVERY: Send failed: ${sendErr.message}`);
+                else logger.debug(`DISCOVERY: Sent ProbeMatches for ${servers.length} cameras to ${remote.address}:${remote.port}`);
+            });
+        });
+    });
+
+    discoverySocket.bind(3702, () => {
+        const joined = new Set();
+        for (const server of servers) {
+            const iface = server.getHostname();
+            if (joined.has(iface)) continue;
+            joined.add(iface);
+            try {
+                discoverySocket.addMembership('239.255.255.250', iface);
+            } catch (e) {
+                logger.debug(`DISCOVERY: addMembership failed for ${iface}: ${e.message}`);
+            }
+        }
+        logger.info(`DISCOVERY: Listening on :3702 for ${servers.length} cameras`);
+    });
 
     return 0;
 }
