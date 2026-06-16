@@ -22,7 +22,7 @@ function readConfig(logger, configFile) {
     try {
         config = YAML.parse(configData);
     } catch (error) {
-        logger.info('Failed to read config, invalid yaml syntax.')
+        logger.info(`CONFIG: Invalid YAML syntax — ${error.message}`);
         process.exit(1);
     }
 
@@ -34,10 +34,48 @@ function sleep(seconds){
     var sleep = spawnSync('sleep', [seconds]);
 }
 
+function validateConfig(logger, config) {
+    let valid = true;
+
+    if (!Array.isArray(config.onvif) || config.onvif.length === 0) {
+        logger.error('CONFIG: "onvif" must be a non-empty array');
+        return false;
+    }
+
+    config.onvif.forEach((cam, i) => {
+        const id = cam.name ? `"${cam.name}"` : `#${i}`;
+
+        if (!cam.name)
+            { logger.error(`CONFIG: camera ${id}: missing required field "name"`); valid = false; }
+        if (!cam.dev)
+            { logger.error(`CONFIG: camera ${id}: missing required field "dev" (parent network interface)`); valid = false; }
+        if (!cam.ports || !cam.ports.server)
+            { logger.error(`CONFIG: camera ${id}: missing required field "ports.server"`); valid = false; }
+        if ((!cam.target || !cam.target.hostname) && (!cam.target || !cam.target.rtsp_url))
+            { logger.error(`CONFIG: camera ${id}: must have "target.hostname" or "target.rtsp_url"`); valid = false; }
+
+        const hq = cam.highQuality;
+        if (!hq) {
+            logger.error(`CONFIG: camera ${id}: missing required section "highQuality"`);
+            valid = false;
+        } else {
+            for (const f of ['width', 'height', 'framerate', 'bitrate', 'quality']) {
+                if (hq[f] == null)
+                    { logger.error(`CONFIG: camera ${id}: missing required field "highQuality.${f}"`); valid = false; }
+            }
+            if (!hq.rtsp)
+                { logger.error(`CONFIG: camera ${id}: missing required field "highQuality.rtsp"`); valid = false; }
+        }
+    });
+
+    return valid;
+}
+
 function readAndCheckConfig(logger, configFile) {
 
-    
     let config = readConfig(logger, configFile);
+
+    if (!validateConfig(logger, config)) process.exit(1);
 
     let isSaveRequired = false;
     let proxyCounter = 0;
