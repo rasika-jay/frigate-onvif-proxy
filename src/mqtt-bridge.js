@@ -9,7 +9,12 @@ module.exports = class MqttBridge {
         this.client        = null;
         this.objects       = Array.isArray(objects) && objects.length > 0
             ? objects.map(o => String(o).toLowerCase())
-            : null;  // null = no filter, fire on all motion/events
+            : null;
+        // Track review IDs for which we've fired notify(true), so we can
+        // pair them with the correct notify(false) on 'end', and also handle
+        // 'update' events that bring in new tracked objects after a 'new'
+        // that had no matching objects yet.
+        this._activeReviews = new Set();
     }
 
     start() {
@@ -21,9 +26,9 @@ module.exports = class MqttBridge {
 
         this.client.on('connect', () => {
             this.logger.info(`MQTT: Connected to ${host}:${port} for camera '${this.frigateCamera}'${this.objects ? ` (filter: ${this.objects.join(', ')})` : ''}`);
-            if (!this.objects)
-                this.client.subscribe(`${prefix}/${this.frigateCamera}/motion`);
-            this.client.subscribe(`${prefix}/events`);
+            // frigate/reviews fires earlier in the detection lifecycle than
+            // frigate/events, giving lower-latency ONVIF notifications.
+            this.client.subscribe(`${prefix}/reviews`);
         });
 
         this.client.on('message', (topic, payload) => {
@@ -39,35 +44,49 @@ module.exports = class MqttBridge {
         });
     }
 
-    _handleMessage(topic, payload, prefix) {
-        const motionTopic = `${prefix}/${this.frigateCamera}/motion`;
+    _matchesFilter(objects) {
+        if (this.objects) {
+            return objects.some(o => this.objects.includes(o.toLowerCase()));
+        }
+        // No filter — fire for any alert-severity review (tracked objects detected)
+        return true;
+    }
 
-        if (topic === motionTopic) {
-            const isMotion = payload.trim().toUpperCase() === 'ON';
-            this.logger.info(`MQTT: ${this.frigateCamera} motion=${isMotion}`);
-            this.eventService.notify(isMotion);
+    _handleMessage(topic, payload, prefix) {
+        if (topic !== `${prefix}/reviews`) return;
+
+        let review;
+        try {
+            review = JSON.parse(payload);
+        } catch (e) {
+            this.logger.debug(`MQTT: Failed to parse review payload: ${e.message}`);
             return;
         }
 
-        if (topic === `${prefix}/events`) {
-            try {
-                const event = JSON.parse(payload);
-                const camera = event.after && event.after.camera;
-                if (camera !== this.frigateCamera) return;
+        const after = review.after || {};
+        if (after.camera !== this.frigateCamera) return;
 
-                if (event.type === 'new') {
-                    const label = (event.after.label || '').toLowerCase();
-                    if (this.objects && !this.objects.includes(label)) return;
-                    this.logger.info(`MQTT: ${this.frigateCamera} event start (${label})`);
-                    this.eventService.notify(true);
-                } else if (event.type === 'end') {
-                    const label = ((event.before || event.after).label || '').toLowerCase();
-                    if (this.objects && !this.objects.includes(label)) return;
-                    this.logger.info(`MQTT: ${this.frigateCamera} event end (${label})`);
-                    this.eventService.notify(false);
-                }
-            } catch (e) {
-                this.logger.debug(`MQTT: Failed to parse event payload: ${e.message}`);
+        const id = after.id;
+
+        if (review.type === 'new' || review.type === 'update') {
+            // Only fire for alert-severity (tracked objects present) when no
+            // objects filter is configured; with a filter, check the objects list.
+            if (after.severity !== 'alert') return;
+
+            const detectedObjects = (after.data && after.data.objects) || [];
+            if (!this._matchesFilter(detectedObjects)) return;
+
+            if (!this._activeReviews.has(id)) {
+                this._activeReviews.add(id);
+                this.logger.info(`MQTT: ${this.frigateCamera} detection start [${detectedObjects.join(', ')}]`);
+                this.eventService.notify(true);
+            }
+        } else if (review.type === 'end') {
+            if (this._activeReviews.has(id)) {
+                this._activeReviews.delete(id);
+                const endObjects = (after.data && after.data.objects) || [];
+                this.logger.info(`MQTT: ${this.frigateCamera} detection end [${endObjects.join(', ')}]`);
+                this.eventService.notify(false);
             }
         }
     }
