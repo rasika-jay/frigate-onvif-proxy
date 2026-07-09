@@ -203,5 +203,7 @@ function cleanupInterfaces(logger, config) {
 
 module.exports = {
     readAndCheckConfig,
-    cleanupInterfaces
+    cleanupInterfaces,
+    deepMerge,
+    validateConfig
 }

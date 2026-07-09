@@ -5,12 +5,12 @@
   "main": "main.js",
   "license": "MIT",
   "author": {
-    "git" : "https://github.com/p10tyr/rtsp-to-onvif",
+    "git": "https://github.com/p10tyr/rtsp-to-onvif",
     "name": "Piotr Kula",
     "email": "rtsp2onvif@kula.email"
   },
   "forked": {
-    "git" : "https://github.com/daniela-hase/onvif-server",
+    "git": "https://github.com/daniela-hase/onvif-server",
     "name": "Daniela Hasenbring",
     "email": "daniela@koshigaya.de"
   },
@@ -23,5 +23,15 @@
     "soap": "1.1.5",
     "xml2js": "0.6.2",
     "yaml": "2.6.1"
+  },
+  "scripts": {
+    "test": "jest --forceExit"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/test/**/*.test.js"]
+  },
+  "devDependencies": {
+    "jest": "^30.4.2"
   }
 }

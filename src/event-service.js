@@ -46,7 +46,7 @@ function notificationMessageXml(utcTime, isMotion) {
       </wsnt:NotificationMessage>`;
 }
 
-module.exports = class EventService {
+class EventService {
     constructor(logger, hostname, port) {
         this.logger = logger;
         this.hostname = hostname;
@@ -340,4 +340,7 @@ ${notificationMessageXml(utcTime, isMotion)}
             this.logger.debug(`EVENT: Invalid consumer URL '${consumerUrl}': ${e.message}`);
         }
     }
-};
+}
+
+module.exports = EventService;
+module.exports.parseTermination = parseTermination;
